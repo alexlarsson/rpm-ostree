@@ -1,6 +1,31 @@
 #!/bin/bash
 set -xeuo pipefail
 
+compare_image_contents() {
+    local base_img="$1"
+    local chunked_img="$2"
+
+    rm -f base-files chunked-files base-labels chunked-labels
+
+    # Verify that the file list matches
+    sudo podman run --rm -ti $base_img ls -I proc -I sysroot -R > base-files
+    sudo podman run --rm -ti $chunked_img ls -I proc -I sysroot -R > chunked-files
+    if ! cmp -s base-files chunked-files; then
+       echo "ERROR: chunked image $chunked_img has different contents than source $base_img:"
+       diff -u base-files chunked-files
+       exit 1
+    fi
+
+    # Verify that the selinux labels matches on some files, including /usr/etc which is tricky
+    sudo podman run --rm -ti $base_img ostree ls -XR "" /usr/etc/aliases /usr/bin/bash > base-labels
+    sudo podman run --rm -ti $chunked_img ostree ls -XR "" /usr/etc/aliases /usr/bin/bash > chunked-labels
+    if ! cmp -s base-labels chunked-labels; then
+       echo "ERROR: chunked image $chunked_img has different labeling than source $base_img:"
+       diff -u base-labels chunked-labels
+       exit 1
+    fi
+}
+
 # First: a cross-arch rechunking
 testimg_base=quay.io/centos-bootc/centos-bootc:stream9
 chunked_output=localhost/chunked-ppc64le
@@ -34,6 +59,8 @@ test "$(date --date="${orig_created}" --rfc-3339=seconds)" = "$(date --date="${n
 test $(jq -r .Labels.testlabel < new-config.json) = "1"
 echo "ok rechunking with labels"
 
+compare_image_contents localhost/base localhost/chunked
+
 # Verify directory metadata for --format-version=1 image
 # This will have nondeterministic mtimes creep in
 test "$(podman run --rm containers-storage:localhost/chunked find /usr -newermt @0 | wc -l)" -gt 0
@@ -62,6 +89,8 @@ podman run --rm --privileged --security-opt=label=disable \
 original_layers_file=$(mktemp)
 podman inspect containers-storage:localhost/chunked | jq -r '.[0].RootFS.Layers[]' | sort > "$original_layers_file"
 
+compare_image_contents localhost/base localhost/chunked
+
 # Build a modified image from the chunked base that adds new packages
 cat > Containerfile.modified <<EOF
 FROM localhost/chunked
@@ -84,6 +113,8 @@ if ! grep -q "Found existing chunked image at target, will use as baseline" "$re
     echo "ERROR: Expected output 'Found existing chunked image at target, will use as baseline' not found"
     exit 1
 fi
+
+compare_image_contents localhost/modified localhost/chunked
 
 # Get the layer digests from the rechunked image
 rechunked_layers_file=$(mktemp)
