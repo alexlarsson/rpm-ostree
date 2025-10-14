@@ -265,7 +265,7 @@ verify_layer_contents "dir4fileB" "$expected_dir4fileB" "$image_manifest"
 echo "ok exclusive layers functionality"
 
 # Cleanup
-podman rmi -f localhost/chunked localhost/modified localhost/exclusive-test localhost/exclusive-chunked
+podman rmi -f localhost/base localhost/chunked localhost/modified localhost/exclusive-test localhost/exclusive-chunked
 rm -rf "${oci_dir}"
 
 echo "Testing oci-archive output"
